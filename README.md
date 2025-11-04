@@ -6,6 +6,16 @@ This repository contains a static, Berkshire Hathaway-inspired investor website 
 
 Open `index.html` in any modern browser. All styling (`styles.css`) and interactivity (`script.js`) load locally, so no additional tooling is required.
 
+## Previewing Locally
+
+To view the site at a true URL without publishing it, you can run a lightweight local web server:
+
+1. Make sure you have Python 3 installed.
+2. From the repository root, run `./preview.sh` (or `bash preview.sh` on Windows with Git Bash).
+3. Open `http://localhost:8000/index.html` in your browser to interact with the page.
+
+The helper script simply wraps `python -m http.server` so you can stop it anytime with `Ctrl+C`.
+
 ## Features
 
 - **Company overview:** Plain-text summary of strategy, scale, and stewardship priorities.
