@@ -10,7 +10,8 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .database import SessionLocal, init_db
+from . import database
+from .database import init_db
 from .models import Entity, FinancialRecord, Lease, Property
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -35,7 +36,7 @@ def seed(portfolio_file: Path = PORTFOLIO_FILE, *, reset: bool = True) -> dict:
     init_db()
     data = yaml.safe_load(portfolio_file.read_text()) or {}
 
-    session: Session = SessionLocal()
+    session: Session = database.SessionLocal()
     try:
         if reset:
             # Re-seeding rebuilds the registry skeleton; keep it simple and explicit.
@@ -90,7 +91,7 @@ def seed(portfolio_file: Path = PORTFOLIO_FILE, *, reset: bool = True) -> dict:
 def import_leases(csv_file: Path) -> int:
     """Import leases from a CSV. Columns: property_id,tenant_name,unit,start_date,
     end_date,monthly_rent,status."""
-    session = SessionLocal()
+    session = database.SessionLocal()
     n = 0
     try:
         with open(csv_file, newline="") as fh:
@@ -114,7 +115,7 @@ def import_leases(csv_file: Path) -> int:
 def import_financials(csv_file: Path) -> int:
     """Import financial records from a CSV. Columns: property_id,entity_id,period,
     kind,category,amount,source."""
-    session = SessionLocal()
+    session = database.SessionLocal()
     n = 0
     try:
         with open(csv_file, newline="") as fh:

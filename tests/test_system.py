@@ -1,21 +1,19 @@
 """End-to-end tests against an isolated, in-temp-dir database."""
 
 import csv
-import os
 from pathlib import Path
 
 import pytest
 
-# Point the app at a throwaway SQLite DB before importing any gmre module.
 _TMP_DB = Path(__file__).resolve().parent / "_test_gmre.db"
-os.environ["GMRE_DATABASE_URL"] = f"sqlite:///{_TMP_DB}"
 
 
 @pytest.fixture(scope="module", autouse=True)
 def fresh_db():
     if _TMP_DB.exists():
         _TMP_DB.unlink()
-    from gmre import seed
+    from gmre import database, seed
+    database.configure(f"sqlite:///{_TMP_DB}")
     seed.seed(reset=True)
     yield
     if _TMP_DB.exists():

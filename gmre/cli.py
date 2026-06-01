@@ -7,8 +7,8 @@ import json
 import sys
 from pathlib import Path
 
-from . import reporting, seed as seed_mod
-from .database import SessionLocal, init_db
+from . import database, reporting, seed as seed_mod
+from .database import init_db
 
 
 def _print_json(obj) -> None:
@@ -37,7 +37,7 @@ def cmd_import_financials(args) -> int:
 
 def cmd_report(args) -> int:
     init_db()
-    session = SessionLocal()
+    session = database.SessionLocal()
     try:
         fn = {
             "overview": reporting.portfolio_overview,
@@ -49,6 +49,38 @@ def cmd_report(args) -> int:
             _print_json(reporting.income_statement(session, args.period))
         else:
             _print_json(fn[args.name](session))
+        return 0
+    finally:
+        session.close()
+
+
+def cmd_sync_quickbooks(args) -> int:
+    import json as _json
+
+    from . import quickbooks as qb
+
+    report = _json.loads(Path(args.file).read_text())
+    lines = qb.parse_pl_report(report)
+    period = args.period or qb.period_from_report(report)
+    if not period:
+        print("error: could not determine period; pass --period YYYY-MM", file=sys.stderr)
+        return 2
+
+    if args.dry_run:
+        print(f"Parsed {len(lines)} lines for entity={args.entity} period={period}:")
+        for ln in lines:
+            print(f"  {ln.kind:<8} {ln.category:<32} {ln.amount:>12,.2f}")
+        return 0
+
+    init_db()
+    session = database.SessionLocal()
+    try:
+        n = qb.load_pl_into_records(
+            session, lines, entity_id=args.entity, period=period,
+            property_id=args.property, replace=not args.no_replace,
+        )
+        print(f"Loaded {n} QuickBooks financial records "
+              f"for entity={args.entity} period={period}.")
         return 0
     finally:
         session.close()
@@ -84,6 +116,17 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("name", choices=["overview", "rent-roll", "entities", "income", "health"])
     r.add_argument("--period", help="YYYY-MM filter for the income statement.")
     r.set_defaults(func=cmd_report)
+
+    sq = sub.add_parser("sync-quickbooks",
+                        help="Load a QuickBooks P&L report (JSON) as financial records.")
+    sq.add_argument("file", help="Path to a QBO P&L report JSON (Intuit or normalized form).")
+    sq.add_argument("--entity", required=True, help="Entity id to attribute the report to.")
+    sq.add_argument("--period", help="YYYY-MM (inferred from the report if omitted).")
+    sq.add_argument("--property", help="Optional property id to attribute records to.")
+    sq.add_argument("--no-replace", action="store_true",
+                    help="Append instead of replacing existing QBO records for the period.")
+    sq.add_argument("--dry-run", action="store_true", help="Print parsed lines; don't write.")
+    sq.set_defaults(func=cmd_sync_quickbooks)
 
     sv = sub.add_parser("serve", help="Run the web dashboard + API.")
     sv.add_argument("--host", default="127.0.0.1")

@@ -71,17 +71,27 @@ def rent_roll(session: Session) -> list[dict]:
 
 
 def entity_rollup(session: Session) -> list[dict]:
-    """Per-entity view: properties owned, and net operating income if available."""
+    """Per-entity view: properties owned, and net operating income if available.
+
+    A financial record is attributed to an entity by its explicit ``entity_id``
+    (e.g. an entity-level QuickBooks P&L), or, when that is absent, by the owning
+    entity of its property. Each record is counted exactly once.
+    """
+    entities = session.scalars(select(Entity)).all()
+    property_owner = {p.id: p.entity_id for e in entities for p in e.properties}
+
+    income: dict[str, float] = defaultdict(float)
+    expense: dict[str, float] = defaultdict(float)
+    for fr in session.scalars(select(FinancialRecord)).all():
+        owner = fr.entity_id or property_owner.get(fr.property_id)
+        if owner is None:
+            continue
+        bucket = income if fr.kind == "income" else expense
+        bucket[owner] += fr.amount
+
     rollup = []
-    for e in session.scalars(select(Entity)).all():
+    for e in entities:
         props = e.properties
-        income = expense = 0.0
-        for p in props:
-            for fr in p.financials:
-                if fr.kind == "income":
-                    income += fr.amount
-                elif fr.kind == "expense":
-                    expense += fr.amount
         rollup.append({
             "entity_id": e.id,
             "entity": e.name,
@@ -89,9 +99,9 @@ def entity_rollup(session: Session) -> list[dict]:
             "role": e.role,
             "property_count": len(props),
             "properties": [p.name for p in props],
-            "income": round(income, 2),
-            "expense": round(expense, 2),
-            "noi": round(income - expense, 2),
+            "income": round(income[e.id], 2),
+            "expense": round(expense[e.id], 2),
+            "noi": round(income[e.id] - expense[e.id], 2),
         })
     return rollup
 

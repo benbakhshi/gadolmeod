@@ -46,6 +46,7 @@ gmre report income --period 2026-05    # income statement for a month
 gmre report health                     # registry gaps to fill in
 gmre import-leases   data/templates/leases.csv
 gmre import-financials data/templates/financials.csv
+gmre sync-quickbooks pl.json --entity 400-railroad-partners-llc  # load a QBO P&L
 gmre serve --host 0.0.0.0 --port 8000  # web dashboard + API
 ```
 
@@ -72,11 +73,32 @@ gmre serve --host 0.0.0.0 --port 8000  # web dashboard + API
    NOI. Export these from QuickBooks (P&L by class/property) and map columns to
    `property_id,entity_id,period,kind,category,amount,source`.
 
-### Wiring up QuickBooks later
+### QuickBooks sync
 
-`FinancialRecord.source` is designed to distinguish `quickbooks` from `csv`/`manual`
-rows. A future sync can pull P&L lines per entity/property and upsert them as
-financial records for a period — the reporting layer already consumes them.
+The reporting app holds no QuickBooks credentials — QBO data is pulled through the
+connected QuickBooks integration and fed to the sync as a P&L report payload, which
+is normalized into `FinancialRecord`s for an entity and period:
+
+```bash
+gmre sync-quickbooks pl.json --entity 400-railroad-partners-llc --period 2026-05
+gmre sync-quickbooks pl.json --entity 400-railroad-partners-llc --dry-run   # preview
+```
+
+- **Input** (`gmre/quickbooks.py`) accepts either Intuit's standard QuickBooks Online
+  `ProfitAndLoss` report JSON (the `Rows -> Row` tree with Income / COGS / Expenses
+  sections) **or** a simple normalized form:
+  `{"period": "2026-05", "lines": [{"kind": "income", "category": "Rent", "amount": 1650}]}`.
+- **Period** is inferred from the report header when omitted.
+- **Idempotent:** re-syncing the same entity + period replaces prior `quickbooks`
+  records (use `--no-replace` to append). `FinancialRecord.source` distinguishes
+  `quickbooks` from `csv`/`manual`/`yaml`.
+
+Because QuickBooks connects to **one company file at a time**, sync one
+entity-connection at a time, passing the matching `--entity`. Once a report is loaded
+it feeds the income statement and the entity's NOI automatically.
+
+> **Note:** the QuickBooks connection requires a valid OAuth token. If it has
+> expired, re-authorize the QuickBooks integration before pulling reports.
 
 ## Data model
 
