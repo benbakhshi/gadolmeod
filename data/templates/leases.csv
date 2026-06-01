@@ -1,0 +1,2 @@
+property_id,tenant_name,unit,start_date,end_date,monthly_rent,status
+railroad-warehouse,Example Tenant LLC,B1G6,2025-01-01,2026-12-31,1650,active

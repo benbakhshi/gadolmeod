@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="cards">
+  <div class="card"><div class="num">{{ overview.property_count }}</div><div class="lbl">Properties</div></div>
+  <div class="card"><div class="num">{{ overview.entity_count }}</div><div class="lbl">Entities</div></div>
+  <div class="card"><div class="num">{{ "{:,}".format(overview.total_sqft) }}</div><div class="lbl">Sq Ft (known)</div></div>
+  <div class="card"><div class="num">${{ "{:,.0f}".format(overview.annualized_rent) }}</div><div class="lbl">Annualized Rent</div></div>
+</section>
+
+<section class="grid2">
+  <div class="panel">
+    <h2>By type</h2>
+    <table>
+      {% for k, v in overview.by_type.items() %}
+      <tr><td>{{ k }}</td><td class="r">{{ v }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="panel">
+    <h2>By status</h2>
+    <table>
+      {% for k, v in overview.by_status.items() %}
+      <tr><td>{{ k }}</td><td class="r">{{ v }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Rent roll</h2>
+  <table class="full">
+    <thead><tr><th>Property</th><th>Entity</th><th>Type</th><th class="r">Active leases</th><th class="r">Monthly</th><th class="r">Annual</th></tr></thead>
+    <tbody>
+      {% for r in rent_roll %}
+      <tr>
+        <td><a href="/properties/{{ r.property_id }}">{{ r.property }}</a></td>
+        <td>{{ r.entity or "—" }}</td>
+        <td>{{ r.type or "—" }}</td>
+        <td class="r">{{ r.active_leases }}</td>
+        <td class="r">${{ "{:,.0f}".format(r.monthly_rent) }}</td>
+        <td class="r">${{ "{:,.0f}".format(r.annual_rent) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Entities</h2>
+  <table class="full">
+    <thead><tr><th>Entity</th><th>Type</th><th>Role</th><th class="r">Properties</th><th class="r">NOI</th></tr></thead>
+    <tbody>
+      {% for e in entities %}
+      <tr>
+        <td>{{ e.entity }}</td>
+        <td>{{ e.type or "—" }}</td>
+        <td>{{ e.role or "—" }}</td>
+        <td class="r">{{ e.property_count }}</td>
+        <td class="r">${{ "{:,.0f}".format(e.noi) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Income statement <small>({{ income.period }})</small></h2>
+  <table class="full">
+    <tr><td>Total income</td><td class="r">${{ "{:,.0f}".format(income.total_income) }}</td></tr>
+    <tr><td>Total expense</td><td class="r">${{ "{:,.0f}".format(income.total_expense) }}</td></tr>
+    <tr class="strong"><td>Net operating income</td><td class="r">${{ "{:,.0f}".format(income.net_operating_income) }}</td></tr>
+  </table>
+  {% if income.record_count == 0 %}
+  <p class="hint">No financial records imported yet. Run <code>gmre import-financials data/templates/financials.csv</code> or wire up the QuickBooks sync.</p>
+  {% endif %}
+</section>
+
+<section class="panel warn">
+  <h2>Data health</h2>
+  <ul>
+    <li>Properties missing owner entity: <strong>{{ health.properties_missing_owner_entity|length }}</strong>
+      {% if health.properties_missing_owner_entity %}<span class="muted">({{ health.properties_missing_owner_entity|join(", ") }})</span>{% endif %}</li>
+    <li>Properties missing city/state: <strong>{{ health.properties_missing_city_state|length }}</strong></li>
+    <li>Properties without leases: <strong>{{ health.properties_without_leases|length }}</strong></li>
+    <li>Financials imported: <strong>{{ "yes" if health.any_financials_imported else "no" }}</strong></li>
+  </ul>
+  <p class="hint">Fill gaps in <code>data/portfolio.yaml</code> and re-run <code>gmre seed</code>.</p>
+</section>
+{% endblock %}

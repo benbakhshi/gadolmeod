@@ -1,0 +1,3 @@
+property_id,entity_id,period,kind,category,amount,source
+railroad-warehouse,400-railroad-partners-llc,2026-05,income,rent,1650,csv
+railroad-warehouse,400-railroad-partners-llc,2026-05,expense,taxes,282,csv

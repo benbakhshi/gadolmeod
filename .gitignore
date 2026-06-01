@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Local database (regenerated from data/portfolio.yaml via `gmre seed`)
+gmre.db
+*.sqlite
+*.sqlite3

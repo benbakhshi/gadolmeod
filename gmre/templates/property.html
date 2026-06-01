@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} — Gadol Meod{% endblock %}
+{% block content %}
+<a href="/" class="back">&larr; Dashboard</a>
+<h1>{{ p.name }}</h1>
+<section class="panel">
+  <table>
+    <tr><td>Address</td><td>{{ p.address }}</td></tr>
+    <tr><td>Owner entity</td><td>{{ p.entity.name if p.entity else "—" }}</td></tr>
+    <tr><td>Type</td><td>{{ p.property_type or "—" }}</td></tr>
+    <tr><td>Status</td><td>{{ p.status or "—" }}</td></tr>
+    <tr><td>Square feet</td><td>{{ "{:,}".format(p.sqft) if p.sqft else "—" }}</td></tr>
+    <tr><td>Acquisition date</td><td>{{ p.acquisition_date or "—" }}</td></tr>
+    <tr><td>Acquisition price</td><td>{{ "${:,.0f}".format(p.acquisition_price) if p.acquisition_price else "—" }}</td></tr>
+  </table>
+  {% if p.notes %}<p class="hint">{{ p.notes }}</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Leases</h2>
+  {% if p.leases %}
+  <table class="full">
+    <thead><tr><th>Tenant</th><th>Unit</th><th>Start</th><th>End</th><th class="r">Monthly</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for l in p.leases %}
+      <tr><td>{{ l.tenant_name }}</td><td>{{ l.unit or "—" }}</td><td>{{ l.start_date or "—" }}</td>
+          <td>{{ l.end_date or "—" }}</td><td class="r">${{ "{:,.0f}".format(l.monthly_rent) if l.monthly_rent else "—" }}</td>
+          <td>{{ l.status }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">No leases on record.</p>
+  {% endif %}
+</section>
+{% endblock %}

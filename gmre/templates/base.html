@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Gadol Meod — Real Estate{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="brand">Gadol Meod <span>Real Estate Registry</span></a>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/api/overview">API</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <p>Gadol Meod Inc — reporting &amp; registry · data source: <code>data/portfolio.yaml</code></p>
+  </footer>
+</body>
+</html>

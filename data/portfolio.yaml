@@ -1,0 +1,242 @@
+# Gadol Meod Inc — Real Estate Registry (source of truth)
+#
+# This file is the human-editable registry. Running `gmre seed` (or starting the
+# app for the first time) loads it into the database. Edit it, commit it, re-seed.
+#
+# Financial figures (rents, prices, NOI) are intentionally LEFT BLANK where not
+# independently known. Populate them here, or import via `gmre import-leases` /
+# `gmre import-financials` (CSV), or wire up the QuickBooks sync. Do not guess.
+#
+# Fields marked `null` are unknown and should be filled in.
+
+entities:
+  - id: gadol-meod-inc
+    name: Gadol Meod Inc
+    type: C-Corp
+    role: holding
+    notes: >-
+      Parent C corporation. Value-add and hold of industrial real estate and
+      publicly traded securities of quality, growing companies.
+
+  - id: herzl-capital-llc
+    name: Herzl Capital LLC
+    type: LLC
+    role: asset_manager
+    notes: Asset manager / management company.
+
+  - id: herzl-real-estate-llc
+    name: Herzl Real Estate LLC
+    type: LLC
+    role: holding
+    notes: Real estate holding entity (e.g., Jeannette Warehouse).
+
+  - id: tikva-investment-lp
+    name: Tikva Investment LP
+    type: LP
+    role: fund
+    notes: Private investment partnership (securities).
+
+  - id: cuttlefish-real-estate-llc
+    name: Cuttlefish Real Estate LLC
+    type: LLC
+    role: holding
+
+  - id: shalom-real-estate-llc
+    name: Shalom Real Estate LLC
+    type: LLC
+    role: holding
+    notes: Associated with Jim Bakhshi.
+
+  - id: 400-railroad-partners-llc
+    name: 400 Railroad Partners LLC
+    type: LLC
+    role: operating
+    notes: Owns the Railroad Warehouse (Verona, PA).
+
+  - id: first-street-partners-llc
+    name: First Street Partners LLC
+    type: LLC
+    role: operating
+    notes: Owns the Henderson, KY property.
+
+  - id: bakhshi-family-trust
+    name: Bakhshi Family Trust
+    type: Trust
+    role: holding
+    notes: Holds single-family residential (SFR) portfolio.
+
+  - id: patriot-shield-llc
+    name: Patriot Shield LLC
+    type: LLC
+    role: private_equity
+
+  - id: electra-leaf-llc
+    name: Electra Leaf LLC
+    type: LLC
+    role: private_equity
+
+properties:
+  # --- Industrial / commercial ---
+  - id: jeannette-warehouse
+    name: Jeannette Warehouse
+    entity_id: herzl-real-estate-llc
+    street: null
+    city: Jeannette
+    state: PA
+    zip: null
+    property_type: warehouse
+    status: owned
+    sqft: null
+    acquisition_date: null
+    acquisition_price: null
+
+  - id: railroad-warehouse
+    name: Railroad Warehouse (400 Railroad)
+    entity_id: 400-railroad-partners-llc
+    street: null
+    city: Verona
+    state: PA
+    zip: null
+    property_type: warehouse
+    status: owned
+    sqft: null
+    acquisition_date: null
+    acquisition_price: null
+    notes: Flex/warehouse/storage space; marketed on Craigslist & Easy Storage.
+
+  - id: henderson-ky
+    name: Henderson KY Property
+    entity_id: first-street-partners-llc
+    street: null
+    city: Henderson
+    state: KY
+    zip: null
+    property_type: industrial
+    status: owned
+    sqft: null
+    acquisition_date: null
+    acquisition_price: null
+    notes: Open insurance claims (B1 flooding, B1 fire).
+
+  - id: 200-grand-ave
+    name: 200 Grand Ave
+    entity_id: null
+    street: 200 Grand Ave
+    city: null
+    state: null
+    zip: null
+    property_type: commercial
+    status: owned
+    sqft: null
+    acquisition_date: null
+    acquisition_price: null
+
+  - id: 213-w-1st-huntingburg
+    name: 213 W 1st St, Huntingburg
+    entity_id: null
+    street: 213 W 1st St
+    city: Huntingburg
+    state: IN
+    zip: "47542"
+    property_type: warehouse
+    status: owned
+    sqft: null
+    acquisition_date: null
+    acquisition_price: null
+
+  - id: rockwood-warehouse
+    name: Rockwood Warehouse
+    entity_id: null
+    street: null
+    city: Rockwood
+    state: TN
+    zip: null
+    property_type: warehouse
+    status: owned
+    sqft: null
+    acquisition_date: null
+    acquisition_price: null
+
+  - id: new-london-offices
+    name: New London Offices
+    entity_id: null
+    street: null
+    city: New London
+    state: null
+    zip: null
+    property_type: office
+    status: owned
+    sqft: null
+    acquisition_date: null
+    acquisition_price: null
+
+  - id: 520-pleasant-valley-trafford
+    name: 520 Pleasant Valley, Trafford
+    entity_id: null
+    street: 520 Pleasant Valley
+    city: Trafford
+    state: PA
+    zip: "15085"
+    property_type: office
+    status: under_contract
+    sqft: 30000
+    acquisition_date: null
+    acquisition_price: null
+    notes: Vacant office near Jeannette; all-cash offer accepted, in due diligence.
+
+  # --- Single-family residential (Bakhshi Family Trust) ---
+  - id: 3626-barrow-place
+    name: 3626 Barrow Place
+    entity_id: bakhshi-family-trust
+    street: 3626 Barrow Place
+    property_type: SFR
+    status: owned
+  - id: 2248-renwick-lane
+    name: 2248 Renwick Lane
+    entity_id: bakhshi-family-trust
+    street: 2248 Renwick Lane
+    property_type: SFR
+    status: owned
+  - id: 2127-knox-ave
+    name: 2127 Knox Ave
+    entity_id: bakhshi-family-trust
+    street: 2127 Knox Ave
+    property_type: SFR
+    status: owned
+  - id: 2098-walden-park-dr
+    name: 2098 Walden Park Dr
+    entity_id: bakhshi-family-trust
+    street: 2098 Walden Park Dr
+    property_type: SFR
+    status: owned
+  - id: 930-buckley-place
+    name: 930 Buckley Place
+    entity_id: bakhshi-family-trust
+    street: 930 Buckley Place
+    property_type: SFR
+    status: owned
+  - id: 731-e-12th-st
+    name: 731 E 12th St
+    entity_id: bakhshi-family-trust
+    street: 731 E 12th St
+    property_type: SFR
+    status: owned
+  - id: 5203-tresham-ct
+    name: 5203 Tresham Ct
+    entity_id: bakhshi-family-trust
+    street: 5203 Tresham Ct
+    property_type: SFR
+    status: owned
+  - id: 4615-irwin-wood-lane
+    name: 4615 Irwin Wood Lane
+    entity_id: bakhshi-family-trust
+    street: 4615 Irwin Wood Lane
+    property_type: SFR
+    status: owned
+
+# Leases and financials are imported, not seeded here. See:
+#   gmre import-leases <file.csv>
+#   gmre import-financials <file.csv>
+# Templates are written to data/templates/ on first run.
+leases: []
+financials: []

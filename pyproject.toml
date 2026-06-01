@@ -1,0 +1,29 @@
+[project]
+name = "gmre"
+version = "0.1.0"
+description = "Gadol Meod Inc — real estate reporting & registry system"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "sqlalchemy>=2.0",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+gmre = "gmre.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["gmre"]
+
+[tool.setuptools.package-data]
+gmre = ["templates/*.html", "static/*.css"]
