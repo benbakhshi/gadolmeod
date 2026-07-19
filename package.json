@@ -1,0 +1,15 @@
+{
+  "name": "leasebid",
+  "version": "0.1.0",
+  "description": "LeaseBid — online marketplace where landlords list properties for lease and tenants either Lease Now at asking rent or place committed, deposit-backed bids.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
