@@ -72,9 +72,30 @@ export class LeaseBidService {
       .run(status, now(), holdId);
   }
 
+  #notify(userId, type, message, listingId = null) {
+    this.db.prepare(
+      `INSERT INTO notifications (id, user_id, type, message, listing_id, read, created_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`
+    ).run(uid(), userId, type, message, listingId, now());
+  }
+
+  #listingLabel(listingId) {
+    const listing = this.getListingRaw(listingId);
+    return this.getProperty(listing.property_id).title;
+  }
+
   #releaseBid(bid, newStatus) {
     this.db.prepare('UPDATE bids SET status = ? WHERE id = ?').run(newStatus, bid.id);
     this.#setHoldStatus(bid.deposit_hold_id, 'released');
+    const label = this.#listingLabel(bid.listing_id);
+    const messages = {
+      lost: `The auction for "${label}" went to another bid. Your commitment deposit was released.`,
+      rejected: `Your bid on "${label}" was declined by the landlord. Your commitment deposit was released.`,
+      cancelled: `The listing "${label}" was cancelled. Your commitment deposit was released.`,
+    };
+    if (messages[newStatus]) {
+      this.#notify(bid.tenant_id, `bid_${newStatus}`, messages[newStatus], bid.listing_id);
+    }
   }
 
   #releaseOtherCommittedBids(listingId, exceptBidId, newStatus) {
@@ -103,22 +124,29 @@ export class LeaseBidService {
   }
 
   /** Award the listing to a bid: reject the rest, create the lease. */
-  #award(listing, bid) {
+  #award(listing, bid, rentCents = bid.monthly_rent_cents) {
     this.db.prepare('UPDATE bids SET status = ? WHERE id = ?').run('accepted', bid.id);
     this.#releaseOtherCommittedBids(listing.id, bid.id, 'lost');
     this.db.prepare('UPDATE listings SET status = ? WHERE id = ?').run('awarded', listing.id);
-    return this.#createLease(listing, bid.tenant_id, bid.monthly_rent_cents, bid.deposit_hold_id);
+    return this.#createLease(listing, bid.tenant_id, rentCents, bid.deposit_hold_id);
   }
 
   #createLease(listing, tenantId, rentCents, depositHoldId) {
     const id = uid();
     const securityDeposit = rentCents * listing.security_deposit_months;
+    const signBy = new Date(Date.now() + listing.signing_deadline_hours * 3600_000).toISOString();
     this.db.prepare(
       `INSERT INTO leases (id, listing_id, property_id, landlord_id, tenant_id, monthly_rent_cents,
-                           term_months, security_deposit_cents, deposit_hold_id, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_signatures', ?)`
+                           term_months, security_deposit_cents, deposit_hold_id, status, sign_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_signatures', ?, ?)`
     ).run(id, listing.id, listing.property_id, listing.landlord_id, tenantId, rentCents,
-      listing.term_months, securityDeposit, depositHoldId, now());
+      listing.term_months, securityDeposit, depositHoldId, signBy, now());
+    const label = this.#listingLabel(listing.id);
+    this.#notify(tenantId, 'lease_ready',
+      `You won "${label}"! Sign the lease before ${signBy} or your commitment deposit may be forfeited.`,
+      listing.id);
+    this.#notify(listing.landlord_id, 'lease_ready',
+      `"${label}" was awarded. Sign the lease to finalize.`, listing.id);
     return this.db.prepare('SELECT * FROM leases WHERE id = ?').get(id);
   }
 
@@ -217,18 +245,27 @@ export class LeaseBidService {
     const minIncomeRatio = body.min_income_ratio === undefined ? 0 : Number(body.min_income_ratio);
     if (!(minIncomeRatio >= 0 && minIncomeRatio <= 20)) throw bad('min_income_ratio must be between 0 and 20');
 
+    const bidVisibility = body.bid_visibility ?? 'open';
+    if (!['open', 'sealed'].includes(bidVisibility)) throw bad("bid_visibility must be 'open' or 'sealed'");
+    const signingHours = body.signing_deadline_hours === undefined ? 72 : Number(body.signing_deadline_hours);
+    if (!(signingHours > 0 && signingHours <= 8760)) {
+      throw bad('signing_deadline_hours must be between 0 and 8760');
+    }
+
     const id = uid();
     this.db.prepare(
       `INSERT INTO listings (id, property_id, landlord_id, status, lease_now_rent_cents, min_bid_rent_cents,
                              commitment_deposit_cents, security_deposit_months, term_months, bid_deadline,
-                             approval_mode, allow_lease_now, allow_bids, min_credit_score, min_income_ratio, created_at)
-       VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                             approval_mode, allow_lease_now, allow_bids, min_credit_score, min_income_ratio,
+                             bid_visibility, signing_deadline_hours, created_at)
+       VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id, property.id, landlord.id, leaseNowRent, minBidRent,
       asPositiveInt(body.commitment_deposit_cents, 'commitment_deposit_cents'),
       asPositiveInt(body.security_deposit_months, 'security_deposit_months'),
       asPositiveInt(body.term_months, 'term_months'),
-      deadline, approvalMode, allowLeaseNow, allowBids, minCredit, minIncomeRatio, now(),
+      deadline, approvalMode, allowLeaseNow, allowBids, minCredit, minIncomeRatio,
+      bidVisibility, signingHours, now(),
     );
     return this.getListing(id);
   }
@@ -251,8 +288,10 @@ export class LeaseBidService {
       property,
       landlord_name: landlord.name,
       committed_bid_count: this.committedBidCount(listing.id),
-      // Amount is public to drive the auction; bidder identity is not.
-      high_bid_cents: high ? high.monthly_rent_cents : null,
+      // Open auctions publish the high amount to drive bidding (never the bidder's
+      // identity). Sealed auctions hide amounts entirely — only the landlord sees them.
+      high_bid_cents: listing.bid_visibility === 'sealed' ? null
+        : high ? high.monthly_rent_cents : null,
     };
   }
 
@@ -330,16 +369,22 @@ export class LeaseBidService {
     if (listing.allow_lease_now && rent >= listing.lease_now_rent_cents) {
       throw bad('Bid meets or exceeds the Lease Now rent — use Lease Now instead');
     }
+    const sealed = listing.bid_visibility === 'sealed';
     const high = this.highestCommittedBid(listing.id);
-    if (high && high.tenant_id !== tenant.id && rent <= high.monthly_rent_cents) {
-      throw conflict(`Bid must beat the current high bid of ${high.monthly_rent_cents} cents`);
-    }
     const own = this.db.prepare(
       `SELECT * FROM bids WHERE listing_id = ? AND tenant_id = ? AND status = 'committed'`
     ).get(listing.id, tenant.id);
-    if (own && rent <= own.monthly_rent_cents) {
-      throw conflict('New bid must be higher than your existing committed bid');
+    if (!sealed) {
+      // Open auction: each bid must beat the visible high bid.
+      if (high && high.tenant_id !== tenant.id && rent <= high.monthly_rent_cents) {
+        throw conflict(`Bid must beat the current high bid of ${high.monthly_rent_cents} cents`);
+      }
+      if (own && rent <= own.monthly_rent_cents) {
+        throw conflict('New bid must be higher than your existing committed bid');
+      }
     }
+    // Sealed auction: bids are independent offers — any qualifying amount is
+    // accepted and a tenant may revise their offer up or down.
 
     const screening = this.screenTenant(listing, tenant.id, rent);
     if (!screening.qualified) {
@@ -355,6 +400,12 @@ export class LeaseBidService {
       `INSERT INTO bids (id, listing_id, tenant_id, monthly_rent_cents, status, deposit_hold_id, created_at)
        VALUES (?, ?, ?, ?, 'committed', ?, ?)`
     ).run(id, listing.id, tenant.id, rent, holdId, now());
+
+    if (!sealed && high && high.tenant_id !== tenant.id && rent > high.monthly_rent_cents) {
+      this.#notify(high.tenant_id, 'outbid',
+        `You've been outbid on "${this.#listingLabel(listing.id)}". The high bid is now ${(rent / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}/mo.`,
+        listing.id);
+    }
     return this.db.prepare('SELECT * FROM bids WHERE id = ?').get(id);
   }
 
@@ -391,6 +442,67 @@ export class LeaseBidService {
       this.db.prepare('UPDATE listings SET status = ? WHERE id = ?').run('expired', listing.id);
     }
     return this.db.prepare('SELECT * FROM bids WHERE id = ?').get(bidId);
+  }
+
+  // ---------- counter-offers ----------
+
+  /** Landlord counters a committed bid at a different rent. The bid stays committed. */
+  counterBid(bidId, landlordId, rentCents) {
+    const bid = this.db.prepare('SELECT * FROM bids WHERE id = ?').get(bidId);
+    if (!bid) throw notFound('Bid not found');
+    const listing = this.getListing(bid.listing_id);
+    if (listing.landlord_id !== landlordId) throw forbidden('Only the listing owner can counter bids');
+    if (!['active', 'under_review'].includes(listing.status)) {
+      throw conflict(`Listing is no longer open (status: '${listing.status}')`);
+    }
+    if (bid.status !== 'committed') throw conflict(`Bid is not committed (status: '${bid.status}')`);
+
+    const rent = asPositiveInt(rentCents, 'monthly_rent_cents');
+    if (rent <= bid.monthly_rent_cents) {
+      throw bad('A counter-offer should be higher than the bid — otherwise just accept it');
+    }
+    if (listing.allow_lease_now && rent > listing.lease_now_rent_cents) {
+      throw bad('Counter cannot exceed the Lease Now rent');
+    }
+    this.db.prepare(
+      `UPDATE bids SET counter_rent_cents = ?, counter_status = 'offered', counter_at = ? WHERE id = ?`
+    ).run(rent, now(), bidId);
+    this.#notify(bid.tenant_id, 'counter_offered',
+      `The landlord countered your bid on "${this.#listingLabel(listing.id)}" at ${(rent / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}/mo. Accept or decline from your dashboard.`,
+      listing.id);
+    return this.db.prepare('SELECT * FROM bids WHERE id = ?').get(bidId);
+  }
+
+  /** Tenant responds to a counter. Accepting awards the listing at the countered rent. */
+  respondToCounter(bidId, tenant, accept) {
+    const bid = this.db.prepare('SELECT * FROM bids WHERE id = ?').get(bidId);
+    if (!bid) throw notFound('Bid not found');
+    if (bid.tenant_id !== tenant.id) throw forbidden('This is not your bid');
+    if (bid.counter_status !== 'offered') throw conflict('There is no open counter-offer on this bid');
+    if (bid.status !== 'committed') throw conflict(`Bid is not committed (status: '${bid.status}')`);
+    const listing = this.getListing(bid.listing_id);
+    if (!['active', 'under_review'].includes(listing.status)) {
+      throw conflict(`Listing is no longer open (status: '${listing.status}')`);
+    }
+
+    const label = this.#listingLabel(listing.id);
+    if (!accept) {
+      this.db.prepare(`UPDATE bids SET counter_status = 'declined' WHERE id = ?`).run(bidId);
+      this.#notify(listing.landlord_id, 'counter_declined',
+        `Your counter-offer on "${label}" was declined. The tenant's original bid stands.`, listing.id);
+      return { bid: this.db.prepare('SELECT * FROM bids WHERE id = ?').get(bidId) };
+    }
+
+    // Re-screen at the higher rent before committing the tenant to it.
+    const screening = this.screenTenant(listing, tenant.id, bid.counter_rent_cents);
+    if (!screening.qualified) {
+      throw conflict(`You do not qualify at the countered rent: ${screening.reasons.join(' ')}`);
+    }
+    this.db.prepare(`UPDATE bids SET counter_status = 'accepted' WHERE id = ?`).run(bidId);
+    this.#notify(listing.landlord_id, 'counter_accepted',
+      `Your counter-offer on "${label}" was accepted. A lease is ready to sign.`, listing.id);
+    const lease = this.#award(listing, bid, bid.counter_rent_cents);
+    return { bid: this.db.prepare('SELECT * FROM bids WHERE id = ?').get(bidId), lease };
   }
 
   // ---------- leases ----------
@@ -430,7 +542,73 @@ export class LeaseBidService {
       // Commitment hold is applied toward the security deposit.
       this.#setHoldStatus(updated.deposit_hold_id, 'applied');
       this.db.prepare('UPDATE listings SET status = ? WHERE id = ?').run('leased', updated.listing_id);
+      const label = this.#listingLabel(updated.listing_id);
+      this.#notify(updated.tenant_id, 'lease_active',
+        `Your lease for "${label}" is fully signed and active. Your commitment deposit was applied to the security deposit.`,
+        updated.listing_id);
+      this.#notify(updated.landlord_id, 'lease_active',
+        `The lease for "${label}" is fully signed and active.`, updated.listing_id);
     }
     return this.getLease(leaseId);
+  }
+
+  /**
+   * Void an award whose signing deadline has passed. This is what makes bids
+   * truly committed: if the tenant won but never signed, their commitment
+   * deposit is forfeited to the landlord. If the landlord is the one who
+   * failed to sign, the tenant walks away and the hold is released in full.
+   */
+  voidLease(leaseId, user) {
+    const lease = this.getLease(leaseId);
+    if (lease.status !== 'pending_signatures') {
+      throw conflict(`Lease is not awaiting signatures (status: '${lease.status}')`);
+    }
+    if (user.id !== lease.tenant_id && user.id !== lease.landlord_id) {
+      throw forbidden('You are not a party to this lease');
+    }
+    if (!lease.sign_by || new Date(lease.sign_by).getTime() > Date.now()) {
+      throw conflict('The signing deadline has not passed yet');
+    }
+
+    const tenantDefaulted = !lease.tenant_signed_at && !!lease.landlord_signed_at;
+    this.db.prepare('UPDATE leases SET status = ? WHERE id = ?').run('cancelled', leaseId);
+    this.db.prepare('UPDATE listings SET status = ? WHERE id = ?').run('expired', lease.listing_id);
+    this.#setHoldStatus(lease.deposit_hold_id, tenantDefaulted ? 'forfeited' : 'released');
+
+    const label = this.#listingLabel(lease.listing_id);
+    if (tenantDefaulted) {
+      this.#notify(lease.tenant_id, 'deposit_forfeited',
+        `You did not sign the lease for "${label}" by the deadline. Your commitment deposit was forfeited to the landlord.`,
+        lease.listing_id);
+      this.#notify(lease.landlord_id, 'award_voided',
+        `The award for "${label}" was voided — the tenant did not sign in time. Their commitment deposit is yours; you can relist the property.`,
+        lease.listing_id);
+    } else {
+      this.#notify(lease.tenant_id, 'award_voided',
+        `The award for "${label}" was voided after the signing deadline passed. Your commitment deposit was released in full.`,
+        lease.listing_id);
+      this.#notify(lease.landlord_id, 'award_voided',
+        `The award for "${label}" was voided after the signing deadline passed. You can relist the property.`,
+        lease.listing_id);
+    }
+    return this.getLease(leaseId);
+  }
+
+  // ---------- notifications ----------
+
+  listNotifications(userId, limit = 50) {
+    return this.db.prepare(
+      'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+    ).all(userId, limit);
+  }
+
+  unreadNotificationCount(userId) {
+    return this.db.prepare(
+      'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read = 0'
+    ).get(userId).n;
+  }
+
+  markNotificationsRead(userId) {
+    this.db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(userId);
   }
 }

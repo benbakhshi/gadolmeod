@@ -24,9 +24,10 @@ async function api(method, url, body) {
 async function loadMe() {
   if (!state.token) { state.user = null; return; }
   try {
-    const { user, tenant_profile } = await api('GET', '/api/me');
+    const { user, tenant_profile, unread_notifications } = await api('GET', '/api/me');
     state.user = user;
     state.tenantProfile = tenant_profile;
+    state.unread = unread_notifications || 0;
   } catch {
     state.token = null;
     state.user = null;
@@ -89,7 +90,8 @@ function bindForm(id, handler) {
 function renderNav() {
   const links = [`<a href="#/browse">Browse listings</a>`];
   if (state.user) {
-    links.push(`<a href="#/dashboard">${state.user.role === 'landlord' ? 'My properties' : 'My activity'}</a>`);
+    const badge = state.unread ? ` <span class="badge blue">${state.unread}</span>` : '';
+    links.push(`<a href="#/dashboard">${state.user.role === 'landlord' ? 'My properties' : 'My activity'}${badge}</a>`);
     links.push(`<span class="who">${esc(state.user.name)} · ${esc(state.user.role)}</span>`);
     links.push(`<a href="#" id="logout">Sign out</a>`);
   } else {
@@ -131,6 +133,7 @@ async function viewBrowse() {
           <span>${esc(l.property.type)}</span>
           <span>${l.property.sqft.toLocaleString()} sqft</span>
           <span>${l.term_months} mo term</span>
+          ${l.allow_bids && l.bid_visibility === 'sealed' ? '<span class="badge yellow">Sealed bids</span>' : ''}
           ${l.allow_bids ? `<span>${l.committed_bid_count} committed bid${l.committed_bid_count === 1 ? '' : 's'}</span>` : ''}
           ${l.bid_deadline ? `<span>${timeLeft(l.bid_deadline)}</span>` : ''}
         </div>
@@ -176,9 +179,11 @@ async function viewListing(id) {
           <div class="actions"><button class="success" id="lease-now">Lease Now — ${money(l.lease_now_rent_cents)}/mo</button></div>
           <hr class="sep">` : ''}
         ${l.allow_bids ? `
-          <p class="small muted">Or place a <strong>committed bid</strong>. A ${money(l.commitment_deposit_cents)}
+          <p class="small muted">${l.allow_lease_now ? 'Or place' : 'Place'} a <strong>committed bid</strong>. A ${money(l.commitment_deposit_cents)}
              deposit is held when you bid and is binding until the auction resolves — it's applied to your
-             security deposit if you win, and released in full if you don't.</p>
+             security deposit if you win, and released in full if you don't.
+             ${l.bid_visibility === 'sealed' ? 'This is a <strong>sealed auction</strong>: offers are hidden from other bidders and only the landlord sees them.' : ''}
+             If you win and don't sign the lease by the signing deadline (${l.signing_deadline_hours}h after award), the deposit is forfeited.</p>
           <form id="bid-form">
             <div class="row">
               <label>Your monthly rent offer ($)
@@ -202,10 +207,12 @@ async function viewListing(id) {
         <td>${money(b.monthly_rent_cents)}/mo</td>
         <td>${esc(b.tenant_name)}<div class="small muted">${esc(b.tenant_email)}</div></td>
         <td>${b.tenant_profile ? `Credit ${b.tenant_profile.credit_score} · ${money(b.tenant_profile.annual_income_cents)}/yr<div class="small muted">${esc(b.tenant_profile.occupation)}</div>` : '<span class="muted">No profile</span>'}</td>
-        <td><span class="badge ${b.status === 'committed' ? 'green' : b.status === 'accepted' ? 'blue' : ''}">${esc(b.status)}</span></td>
+        <td><span class="badge ${b.status === 'committed' ? 'green' : b.status === 'accepted' ? 'blue' : ''}">${esc(b.status)}</span>
+          ${b.counter_status ? `<div class="small muted">counter ${money(b.counter_rent_cents)} — ${esc(b.counter_status)}</div>` : ''}</td>
         <td>${b.status === 'committed' && ['active', 'under_review'].includes(l.status) ? `
           <div class="actions">
             <button class="success" data-accept="${b.id}">Accept</button>
+            <button class="secondary" data-counter="${b.id}">Counter</button>
             <button class="danger" data-reject="${b.id}">Reject</button>
           </div>` : ''}</td>
       </tr>`).join('');
@@ -228,7 +235,7 @@ async function viewListing(id) {
         ${l.allow_lease_now ? `<div class="item"><div class="label">Lease now</div><div class="value accent">${money(l.lease_now_rent_cents)}/mo</div></div>` : ''}
         ${l.allow_bids ? `
           <div class="item"><div class="label">Minimum bid</div><div class="value">${money(l.min_bid_rent_cents)}/mo</div></div>
-          <div class="item"><div class="label">Current high bid</div><div class="value">${l.high_bid_cents ? money(l.high_bid_cents) + '/mo' : '—'}</div></div>
+          <div class="item"><div class="label">Current high bid</div><div class="value">${l.bid_visibility === 'sealed' ? 'Sealed' : l.high_bid_cents ? money(l.high_bid_cents) + '/mo' : '—'}</div></div>
           <div class="item"><div class="label">Committed bids</div><div class="value">${l.committed_bid_count}</div></div>
           <div class="item"><div class="label">Auction</div><div class="value">${timeLeft(l.bid_deadline) || '—'}</div></div>` : ''}
       </div>
@@ -267,6 +274,12 @@ async function viewListing(id) {
   }));
   app.querySelectorAll('[data-reject]').forEach((btn) => btn.addEventListener('click', async () => {
     try { await api('POST', `/api/bids/${btn.dataset.reject}/reject`); viewListing(l.id); }
+    catch (err) { flash('error', err.message); }
+  }));
+  app.querySelectorAll('[data-counter]').forEach((btn) => btn.addEventListener('click', async () => {
+    const amount = prompt('Counter-offer rent ($/mo)? The tenant can accept it to lease at that rent, or decline and keep their original bid standing.');
+    if (!amount) return;
+    try { await api('POST', `/api/bids/${btn.dataset.counter}/counter`, { monthly_rent_cents: dollarsToCents(amount) }); viewListing(l.id); }
     catch (err) { flash('error', err.message); }
   }));
   const cancelBtn = document.getElementById('cancel-listing');
@@ -316,10 +329,11 @@ async function viewDashboard() {
 }
 
 async function viewLandlordDashboard() {
-  const [{ properties }, { listings }, { leases }] = await Promise.all([
+  const [{ properties }, { listings }, { leases }, { notifications }] = await Promise.all([
     api('GET', '/api/properties'),
     api('GET', '/api/listings?mine=1'),
     api('GET', '/api/me/leases'),
+    api('GET', '/api/me/notifications'),
   ]);
 
   const propOptions = properties.map((p) => `<option value="${p.id}">${esc(p.title)} — ${esc(p.address)}</option>`).join('');
@@ -336,6 +350,7 @@ async function viewLandlordDashboard() {
   app.innerHTML = `
     <h1>Landlord dashboard</h1>
     <div id="flash"></div>
+    ${renderNotifications(notifications)}
 
     <h2>Your listings</h2>
     ${listingRows ? `<div class="panel table-wrap"><table>
@@ -389,6 +404,15 @@ async function viewLandlordDashboard() {
         </label>
       </div>
       <div class="row">
+        <label>Bid visibility
+          <select name="bid_visibility">
+            <option value="open">Open — bidders see the current high bid</option>
+            <option value="sealed">Sealed — offers hidden, only I see them</option>
+          </select>
+        </label>
+        <label>Signing deadline after award (hours)<input name="signing_deadline_hours" type="number" min="1" max="8760" value="72" /></label>
+      </div>
+      <div class="row">
         <label>Lease term (months)<input name="term_months" type="number" min="1" value="36" required /></label>
         <label>Commitment deposit held per bid ($)<input name="commitment_deposit" type="number" min="1" value="2500" required /></label>
       </div>
@@ -416,6 +440,8 @@ async function viewLandlordDashboard() {
       allow_lease_now: !!data.allow_lease_now,
       allow_bids: !!data.allow_bids,
       approval_mode: data.approval_mode,
+      bid_visibility: data.bid_visibility,
+      signing_deadline_hours: Number(data.signing_deadline_hours || 72),
       term_months: Number(data.term_months),
       security_deposit_months: Number(data.security_deposit_months),
       commitment_deposit_cents: dollarsToCents(data.commitment_deposit),
@@ -433,9 +459,10 @@ async function viewLandlordDashboard() {
 }
 
 async function viewTenantDashboard() {
-  const [{ bids }, { leases }] = await Promise.all([
+  const [{ bids }, { leases }, { notifications }] = await Promise.all([
     api('GET', '/api/me/bids'),
     api('GET', '/api/me/leases'),
+    api('GET', '/api/me/notifications'),
   ]);
   const p = state.tenantProfile;
 
@@ -444,12 +471,19 @@ async function viewTenantDashboard() {
       <td><a href="#/listing/${b.listing_id}" style="color:var(--accent)">${esc(b.listing.property.title)}</a></td>
       <td>${money(b.monthly_rent_cents)}/mo</td>
       <td><span class="badge ${b.status === 'committed' ? 'green' : b.status === 'accepted' ? 'blue' : ''}">${esc(b.status)}</span></td>
+      <td>${b.counter_status === 'offered' ? `
+          <div><strong>${money(b.counter_rent_cents)}/mo</strong> countered by landlord</div>
+          <div class="actions">
+            <button class="success" data-counter-accept="${b.id}">Accept</button>
+            <button class="secondary" data-counter-decline="${b.id}">Decline</button>
+          </div>` : b.counter_status ? `${money(b.counter_rent_cents)}/mo — ${esc(b.counter_status)}` : '—'}</td>
       <td>${b.listing.bid_deadline ? esc(timeLeft(b.listing.bid_deadline)) : '—'}</td>
     </tr>`).join('');
 
   app.innerHTML = `
     <h1>Tenant dashboard</h1>
     <div id="flash"></div>
+    ${renderNotifications(notifications)}
 
     <h2>Screening profile</h2>
     <p class="small muted">Listings set minimum requirements; your profile is checked automatically when you bid.
@@ -465,10 +499,20 @@ async function viewTenantDashboard() {
 
     <h2>My committed bids</h2>
     ${bidRows ? `<div class="panel table-wrap"><table>
-      <thead><tr><th>Property</th><th>My offer</th><th>Status</th><th>Auction</th></tr></thead>
+      <thead><tr><th>Property</th><th>My offer</th><th>Status</th><th>Counter-offer</th><th>Auction</th></tr></thead>
       <tbody>${bidRows}</tbody></table></div>` : '<p class="muted">No bids yet — <a href="#/browse" style="color:var(--accent)">browse open listings</a>.</p>'}
 
     ${renderLeases(leases, 'tenant')}`;
+
+  app.querySelectorAll('[data-counter-accept]').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!confirm('Accept the counter-offer? You will lease at the countered rent and a lease will be generated for signing.')) return;
+    try { await api('POST', `/api/bids/${btn.dataset.counterAccept}/counter/accept`); viewDashboard(); }
+    catch (err) { flash('error', err.message); }
+  }));
+  app.querySelectorAll('[data-counter-decline]').forEach((btn) => btn.addEventListener('click', async () => {
+    try { await api('POST', `/api/bids/${btn.dataset.counterDecline}/counter/decline`); viewDashboard(); }
+    catch (err) { flash('error', err.message); }
+  }));
 
   bindForm('profile-form', async (data) => {
     const { tenant_profile } = await api('PUT', '/api/me/tenant-profile', {
@@ -481,24 +525,60 @@ async function viewTenantDashboard() {
   });
 }
 
+function renderNotifications(notifications) {
+  if (!notifications || !notifications.length) return '';
+  const items = notifications.slice(0, 12).map((n) => `
+    <li class="${n.read ? 'muted' : ''}" style="padding:0.4rem 0;border-bottom:1px solid var(--border)">
+      ${n.read ? '' : '<span class="badge blue">new</span> '}${esc(n.message)}
+      ${n.listing_id ? ` <a href="#/listing/${n.listing_id}" style="color:var(--accent)">view</a>` : ''}
+      <div class="small muted">${new Date(n.created_at).toLocaleString()}</div>
+    </li>`).join('');
+  setTimeout(() => {
+    const btn = document.getElementById('mark-read');
+    if (btn) btn.addEventListener('click', async () => {
+      await api('POST', '/api/me/notifications/read');
+      state.unread = 0;
+      renderNav();
+      viewDashboard();
+    });
+  });
+  return `
+    <h2>Notifications</h2>
+    <div class="panel">
+      <ul style="list-style:none">${items}</ul>
+      ${notifications.some((n) => !n.read) ? '<div class="actions"><button class="secondary" id="mark-read">Mark all read</button></div>' : ''}
+    </div>`;
+}
+
 function renderLeases(leases, role) {
   if (!leases.length) return '';
   const rows = leases.map((lease) => {
     const mySigned = role === 'tenant' ? lease.tenant_signed_at : lease.landlord_signed_at;
     const canSign = lease.status === 'pending_signatures' && !mySigned;
+    const pastSignBy = lease.sign_by && new Date(lease.sign_by).getTime() <= Date.now();
+    const canVoid = lease.status === 'pending_signatures' && pastSignBy;
     return `
       <tr>
         <td>${esc(lease.property.title)}<div class="small muted">${esc(lease.property.address)}</div></td>
         <td>${money(lease.monthly_rent_cents)}/mo × ${lease.term_months} mo</td>
         <td>${money(lease.security_deposit_cents)}</td>
-        <td><span class="badge ${lease.status === 'active' ? 'green' : 'yellow'}">${esc(lease.status.replace('_', ' '))}</span>
-          <div class="small muted">tenant ${lease.tenant_signed_at ? '✓' : '…'} · landlord ${lease.landlord_signed_at ? '✓' : '…'}</div></td>
-        <td>${canSign ? `<button class="success" data-sign="${lease.id}">Sign lease</button>` : ''}</td>
+        <td><span class="badge ${lease.status === 'active' ? 'green' : lease.status === 'cancelled' ? 'red' : 'yellow'}">${esc(lease.status.replace(/_/g, ' '))}</span>
+          <div class="small muted">tenant ${lease.tenant_signed_at ? '✓' : '…'} · landlord ${lease.landlord_signed_at ? '✓' : '…'}</div>
+          ${lease.status === 'pending_signatures' && lease.sign_by ? `<div class="small ${pastSignBy ? '' : 'muted'}">sign by: ${new Date(lease.sign_by).toLocaleString()}${pastSignBy ? ' — deadline passed' : ''}</div>` : ''}</td>
+        <td><div class="actions">
+          ${canSign ? `<button class="success" data-sign="${lease.id}">Sign lease</button>` : ''}
+          ${canVoid ? `<button class="danger" data-void="${lease.id}">Void award</button>` : ''}
+        </div></td>
       </tr>`;
   }).join('');
   setTimeout(() => {
     document.querySelectorAll('[data-sign]').forEach((btn) => btn.addEventListener('click', async () => {
       try { await api('POST', `/api/leases/${btn.dataset.sign}/sign`); viewDashboard(); }
+      catch (err) { flash('error', err.message); }
+    }));
+    document.querySelectorAll('[data-void]').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm('Void this award? If the tenant won but never signed, their commitment deposit is forfeited to the landlord; otherwise it is released in full.')) return;
+      try { await api('POST', `/api/leases/${btn.dataset.void}/void`); viewDashboard(); }
       catch (err) { flash('error', err.message); }
     }));
   });

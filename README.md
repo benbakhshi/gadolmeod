@@ -22,21 +22,32 @@ prospects from tire-kickers. LeaseBid fixes both sides:
 1. **Landlord publishes a listing** for a property with any combination of:
    - a **Lease Now** rent (instant lease, like "Buy It Now"),
    - an **auction**: minimum bid, bid deadline, and a commitment deposit amount;
-   plus lease terms (term length, security deposit) and **minimum tenant requirements**
-   (credit score, income-to-rent ratio).
+   plus lease terms (term length, security deposit), **minimum tenant requirements**
+   (credit score, income-to-rent ratio), **bid visibility** (open — bidders see the
+   current high bid — or **sealed** — offers hidden, only the landlord sees them), and a
+   **signing deadline** for the eventual winner.
 2. **Tenant completes a screening profile** (income, credit score). Bids from tenants who
    don't meet a listing's minimums are rejected automatically.
 3. **Tenant acts**:
    - *Lease Now* — commitment deposit is held, the auction ends, a lease is generated.
-   - *Committed bid* — must beat the current high bid; a commitment deposit is held and the
-     bid is **binding** until the auction resolves.
+   - *Committed bid* — in open auctions it must beat the current high bid (the previous
+     high bidder gets an **outbid notification**); in sealed auctions any qualifying offer
+     stands. Either way a commitment deposit is held and the bid is **binding** until the
+     auction resolves.
 4. **Award** — the landlord picks the model when listing:
    - `auto` — at the deadline, the highest committed bid wins automatically.
    - `manual` — the landlord reviews screened, committed bids and accepts one (before or
-     after the deadline; at the deadline the listing moves to *under review*).
+     after the deadline; at the deadline the listing moves to *under review*). They can
+     also **counter-offer** any bid at a higher rent — the tenant accepts (leasing at the
+     countered rent, re-screened at that level) or declines and their original bid stands.
 5. **Lease & deposits** — the winner's commitment hold is applied toward the security
    deposit; both parties e-sign and the lease goes active. Losing bidders get their holds
    released in full automatically.
+6. **Committed means committed** — the winner must sign by the listing's signing deadline.
+   If the tenant won but never signed, the landlord can void the award and **keep the
+   commitment deposit**; if the landlord failed to sign, the tenant walks away and the
+   hold is released in full. Every step (outbid, counter, award, release, forfeiture)
+   generates an in-app notification.
 
 ## Running it
 
@@ -69,12 +80,12 @@ Money is stored as integer cents. Auctions finalize lazily on read when the dead
 
 | MVP (this repo) | Production roadmap |
 | --- | --- |
-| Deposit holds tracked in a ledger table | Real escrow / payment rails (Stripe, escrow.com) |
+| Deposit holds tracked in a ledger table (held / released / applied / forfeited) | Real escrow / payment rails (Stripe manual-capture holds, escrow.com) |
 | Self-reported income & credit score | Verified screening (credit bureau, bank linking, background checks) |
-| Click-to-sign leases | Real e-signature (DocuSign etc.) + jurisdiction-specific lease templates |
-| Single-node SQLite | Postgres, background jobs for deadline finalization, notifications |
-| Anonymous high-bid display | Landlord-configurable bid visibility (sealed vs. open auctions) |
+| Click-to-sign leases with signing deadlines | Real e-signature (DocuSign etc.) + jurisdiction-specific lease templates |
+| Single-node SQLite, lazy deadline finalization | Postgres, background jobs, email/SMS delivery of the notification feed |
+| In-app notification feed | Push/email notifications, digest settings |
 
-Other roadmap ideas: counter-offers, landlord pre-approval of bidders before they may bid,
-photos and floor plans, broker accounts, scheduled tours, and rent-concession bidding
-(bid on free-rent months instead of rate).
+Other roadmap ideas: landlord pre-approval of bidders before they may bid, photos and
+floor plans, broker accounts, scheduled tours, one-click relisting after a voided award,
+and rent-concession bidding (bid on free-rent months instead of rate).

@@ -55,16 +55,19 @@ CREATE TABLE IF NOT EXISTS listings (
   allow_bids               INTEGER NOT NULL,
   min_credit_score         INTEGER NOT NULL DEFAULT 0,
   min_income_ratio         REAL NOT NULL DEFAULT 0, -- monthly income must be >= ratio * offered rent
+  bid_visibility           TEXT NOT NULL DEFAULT 'open' CHECK (bid_visibility IN ('open', 'sealed')),
+  signing_deadline_hours   REAL NOT NULL DEFAULT 72, -- winner must sign within this window
   created_at               TEXT NOT NULL
 );
 
 -- Simulated escrow. Roadmap: real payment rails (Stripe/escrow provider).
+-- 'forfeited': an awarded tenant failed to sign by the deadline and lost the hold.
 CREATE TABLE IF NOT EXISTS deposit_holds (
   id           TEXT PRIMARY KEY,
   user_id      TEXT NOT NULL REFERENCES users(id),
   listing_id   TEXT NOT NULL REFERENCES listings(id),
   amount_cents INTEGER NOT NULL,
-  status       TEXT NOT NULL CHECK (status IN ('held', 'released', 'applied')),
+  status       TEXT NOT NULL CHECK (status IN ('held', 'released', 'applied', 'forfeited')),
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );
@@ -77,6 +80,9 @@ CREATE TABLE IF NOT EXISTS bids (
   status             TEXT NOT NULL CHECK (status IN
                        ('committed', 'superseded', 'accepted', 'rejected', 'lost', 'cancelled')),
   deposit_hold_id    TEXT NOT NULL REFERENCES deposit_holds(id),
+  counter_rent_cents INTEGER,  -- landlord's counter-offer, if any
+  counter_status     TEXT CHECK (counter_status IN ('offered', 'accepted', 'declined')),
+  counter_at         TEXT,
   created_at         TEXT NOT NULL
 );
 
@@ -93,17 +99,72 @@ CREATE TABLE IF NOT EXISTS leases (
   status                  TEXT NOT NULL CHECK (status IN ('pending_signatures', 'active', 'cancelled')),
   tenant_signed_at        TEXT,
   landlord_signed_at      TEXT,
+  sign_by                 TEXT, -- both parties must sign by this time or the award can be voided
   created_at              TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  type       TEXT NOT NULL,
+  message    TEXT NOT NULL,
+  listing_id TEXT,
+  read       INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
 CREATE INDEX IF NOT EXISTS idx_bids_listing ON bids(listing_id);
 CREATE INDEX IF NOT EXISTS idx_holds_listing ON deposit_holds(listing_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read);
 `;
+
+/** Bring a database created by an earlier prototype version up to the current schema. */
+function migrate(db) {
+  const cols = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  const addColumn = (table, name, def) => {
+    if (!cols(table).includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
+  };
+  addColumn('listings', 'bid_visibility', "TEXT NOT NULL DEFAULT 'open'");
+  addColumn('listings', 'signing_deadline_hours', 'REAL NOT NULL DEFAULT 72');
+  addColumn('bids', 'counter_rent_cents', 'INTEGER');
+  addColumn('bids', 'counter_status', 'TEXT');
+  addColumn('bids', 'counter_at', 'TEXT');
+  addColumn('leases', 'sign_by', 'TEXT');
+
+  // deposit_holds gained the 'forfeited' status; the CHECK constraint on old
+  // databases has to be rebuilt (SQLite cannot alter constraints in place).
+  const holdsSql = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'deposit_holds'"
+  ).get()?.sql ?? '';
+  if (!holdsSql.includes('forfeited')) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE deposit_holds_new (
+        id           TEXT PRIMARY KEY,
+        user_id      TEXT NOT NULL REFERENCES users(id),
+        listing_id   TEXT NOT NULL REFERENCES listings(id),
+        amount_cents INTEGER NOT NULL,
+        status       TEXT NOT NULL CHECK (status IN ('held', 'released', 'applied', 'forfeited')),
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+      );
+      INSERT INTO deposit_holds_new
+        SELECT id, user_id, listing_id, amount_cents, status, created_at, updated_at FROM deposit_holds;
+      DROP TABLE deposit_holds;
+      ALTER TABLE deposit_holds_new RENAME TO deposit_holds;
+      CREATE INDEX IF NOT EXISTS idx_holds_listing ON deposit_holds(listing_id);
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+}
 
 export function openDb(path = process.env.LEASEBID_DB || 'leasebid.sqlite') {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }

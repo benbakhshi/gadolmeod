@@ -77,7 +77,24 @@ export function createApp({ dbPath } = {}) {
 
     ['GET', /^\/api\/me$/, async (req) => {
       const user = requireUser(req);
-      return { user, tenant_profile: svc.getTenantProfile(user.id) };
+      return {
+        user,
+        tenant_profile: svc.getTenantProfile(user.id),
+        unread_notifications: svc.unreadNotificationCount(user.id),
+      };
+    }],
+
+    ['GET', /^\/api\/me\/notifications$/, async (req) => {
+      const user = requireUser(req);
+      return {
+        notifications: svc.listNotifications(user.id),
+        unread: svc.unreadNotificationCount(user.id),
+      };
+    }],
+    ['POST', /^\/api\/me\/notifications\/read$/, async (req) => {
+      const user = requireUser(req);
+      svc.markNotificationsRead(user.id);
+      return { ok: true };
     }],
 
     ['PUT', /^\/api\/me\/tenant-profile$/, async (req, _p, body) => {
@@ -158,6 +175,19 @@ export function createApp({ dbPath } = {}) {
       const user = requireUser(req);
       return { bid: svc.rejectBid(id, user.id) };
     }],
+    ['POST', /^\/api\/bids\/([\w-]+)\/counter$/, async (req, [id], body) => {
+      const user = requireUser(req);
+      requireFields(body, ['monthly_rent_cents']);
+      return { bid: svc.counterBid(id, user.id, body.monthly_rent_cents) };
+    }],
+    ['POST', /^\/api\/bids\/([\w-]+)\/counter\/accept$/, async (req, [id]) => {
+      const user = requireUser(req);
+      return svc.respondToCounter(id, user, true);
+    }],
+    ['POST', /^\/api\/bids\/([\w-]+)\/counter\/decline$/, async (req, [id]) => {
+      const user = requireUser(req);
+      return svc.respondToCounter(id, user, false);
+    }],
 
     // Leases
     ['GET', /^\/api\/me\/leases$/, async (req) => {
@@ -167,6 +197,10 @@ export function createApp({ dbPath } = {}) {
     ['POST', /^\/api\/leases\/([\w-]+)\/sign$/, async (req, [id]) => {
       const user = requireUser(req);
       return { lease: svc.signLease(id, user) };
+    }],
+    ['POST', /^\/api\/leases\/([\w-]+)\/void$/, async (req, [id]) => {
+      const user = requireUser(req);
+      return { lease: svc.voidLease(id, user) };
     }],
   ];
 
